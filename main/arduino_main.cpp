@@ -5,21 +5,44 @@
 #include "sdkconfig.h"
 #include <Arduino.h>
 #include <Bluepad32.h>
-#include <ESP32Servo.h>
 #include <uni.h>
 #include "controller_callbacks.h"
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows for up to 4 concurrent controller connections, but we only need 1
 
-const int SERVO_PIN = 13;
-const unsigned long SERVO_RUN_MS = 1000;
-const int SERVO_RUN_SPEED = 180;  // full speed one direction (continuous-rotation servo)
-const int SERVO_STOP_SPEED = 90;  // neutral/stopped
+// ---- Drivetrain pins: DRV8833 dual H-bridge, per the Robotathon hardware guide. ----
+// Each motor takes two PWM-capable pins (IN1/IN2): PWM one side for a direction, the
+// other side held low. Both low = coast, both high = brake (we don't use brake here).
+// Left motor
+const int LEFT_IN1_PIN = 16;
+const int LEFT_IN2_PIN = 17;
+const int LEFT_IN1_CHANNEL = 0;
+const int LEFT_IN2_CHANNEL = 1;
+// Right motor
+const int RIGHT_IN1_PIN = 18;
+const int RIGHT_IN2_PIN = 19;
+const int RIGHT_IN1_CHANNEL = 2;
+const int RIGHT_IN2_CHANNEL = 3;
 
-Servo motorServo;
-bool servoRunning = false;
-unsigned long servoStartMs = 0;
-bool prevAPressed = false;
+const int PWM_FREQ_HZ = 5000;
+const int PWM_RESOLUTION_BITS = 8;  // duty range 0-255
+
+const int DRIVE_SPEED = 255;  // full speed forward
+
+void driveMotor(int in1Channel, int in2Channel, int speed) {
+    // speed: -255 (full reverse) .. 255 (full forward)
+    speed = constrain(speed, -255, 255);
+    if (speed > 0) {
+        ledcWrite(in1Channel, speed);
+        ledcWrite(in2Channel, 0);
+    } else if (speed < 0) {
+        ledcWrite(in1Channel, 0);
+        ledcWrite(in2Channel, -speed);
+    } else {
+        ledcWrite(in1Channel, 0);
+        ledcWrite(in2Channel, 0);
+    }
+}
 
 void dumpGamepad(ControllerPtr ctl) {
     Console.printf(
@@ -46,8 +69,15 @@ void setup() {
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
 
-    motorServo.attach(SERVO_PIN);
-    motorServo.write(SERVO_STOP_SPEED);
+    ledcSetup(LEFT_IN1_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
+    ledcAttachPin(LEFT_IN1_PIN, LEFT_IN1_CHANNEL);
+    ledcSetup(LEFT_IN2_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
+    ledcAttachPin(LEFT_IN2_PIN, LEFT_IN2_CHANNEL);
+
+    ledcSetup(RIGHT_IN1_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
+    ledcAttachPin(RIGHT_IN1_PIN, RIGHT_IN1_CHANNEL);
+    ledcSetup(RIGHT_IN2_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
+    ledcAttachPin(RIGHT_IN2_PIN, RIGHT_IN2_CHANNEL);
 }
 
 void loop() {
@@ -56,20 +86,12 @@ void loop() {
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {
 
-            bool aPressed = myController->a();
-            if (aPressed && !prevAPressed && !servoRunning) { // Start on the press, ignore if already running
-                servoRunning = true;
-                servoStartMs = millis();
-                motorServo.write(SERVO_RUN_SPEED);
-            }
-            prevAPressed = aPressed;
+            int speed = myController->x() ? DRIVE_SPEED : 0;  // Hold X to move forward, release to stop
+
+            driveMotor(LEFT_IN1_CHANNEL, LEFT_IN2_CHANNEL, speed);
+            driveMotor(RIGHT_IN1_CHANNEL, RIGHT_IN2_CHANNEL, speed);
 
             dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
         }
-    }
-
-    if (servoRunning && (millis() - servoStartMs >= SERVO_RUN_MS)) {
-        motorServo.write(SERVO_STOP_SPEED);
-        servoRunning = false;
     }
 }
