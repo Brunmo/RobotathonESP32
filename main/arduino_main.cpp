@@ -8,6 +8,18 @@
 #include <uni.h>
 #include "controller_callbacks.h"
 
+#include <Wire.h>
+#include <Arduino_APDS9960.h>
+#include <bits/stdc++.h>
+
+#define APDS9960_INT 2
+#define I2C_SDA 21
+#define I2C_SCL 22
+#define I2C_FREQ 100000
+
+TwoWire I2C_0 = TwoWire(0);
+APDS9960 apds = APDS9960(I2C_0, APDS9960_INT);
+
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows for up to 4 concurrent controller connections, but we only need 1
 
 // ---- Drivetrain pins: DRV8833 dual H-bridge, per the Robotathon hardware guide. ----
@@ -27,7 +39,7 @@ const int RIGHT_IN2_CHANNEL = 3;
 const int PWM_FREQ_HZ = 5000;
 const int PWM_RESOLUTION_BITS = 8;  // duty range 0-255
 
-const int DRIVE_SPEED = 255;  // full speed forward
+const int DRIVE_SPEED = 255;  // full speed, either direction
 
 void driveMotor(int in1Channel, int in2Channel, int speed) {
     // speed: -255 (full reverse) .. 255 (full forward)
@@ -78,6 +90,14 @@ void setup() {
     ledcAttachPin(RIGHT_IN1_PIN, RIGHT_IN1_CHANNEL);
     ledcSetup(RIGHT_IN2_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION_BITS);
     ledcAttachPin(RIGHT_IN2_PIN, RIGHT_IN2_CHANNEL);
+
+    //sets up I2C protocol
+    I2C_0.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
+
+    //sets up color sensor
+    apds.setInterruptPin(APDS9960_INT);
+    apds.begin();
+    Serial.begin(115200);
 }
 
 void loop() {
@@ -86,7 +106,12 @@ void loop() {
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {
 
-            int speed = myController->x() ? DRIVE_SPEED : 0;  // Hold X to move forward, release to stop
+            int speed = 0;
+            if (myController->x()) {
+                speed = DRIVE_SPEED;    // Hold X to move forward
+            } else if (myController->b()) {
+                speed = -DRIVE_SPEED;   // Hold B to move backward
+            }
 
             driveMotor(LEFT_IN1_CHANNEL, LEFT_IN2_CHANNEL, speed);
             driveMotor(RIGHT_IN1_CHANNEL, RIGHT_IN2_CHANNEL, speed);
